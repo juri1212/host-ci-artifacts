@@ -1,0 +1,155 @@
+name: Reusable - Publish HTML report to gh-pages with age retention
+
+on:
+  workflow_call:
+    inputs:
+      report_path:
+        description: "Path (in caller workspace) to generated HTML report directory"
+        required: true
+        type: string
+      retention_days:
+        description: "Delete reports older than this many days"
+        required: false
+        default: 30
+        type: number
+      reports_dir:
+        description: "Directory inside gh-pages where reports are stored"
+        required: false
+        default: reports
+        type: string
+      pages_branch:
+        description: "Pages branch"
+        required: false
+        default: gh-pages
+        type: string
+      artifact_name:
+        description: "Optional: download this artifact instead of using local report_path"
+        required: false
+        default: ""
+        type: string
+    outputs:
+      report_url:
+        description: "URL to the published report (pages site)"
+        value: ${{ jobs.publish.outputs.report_url }}
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    outputs:
+      report_url: ${{ steps.set_output.outputs.report_url }}
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+
+      - name: Download artifact (optional)
+        if: ${{ inputs.artifact_name != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.report_path }}
+
+      - name: Validate report path
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d "${{ inputs.report_path }}" ]; then
+            echo "Report directory not found: ${{ inputs.report_path }}"
+            exit 1
+          fi
+
+      - name: Checkout pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.pages_branch }}
+          path: pages
+        continue-on-error: true
+
+      - name: Initialize pages branch if needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d pages/.git ]; then
+            git clone --no-checkout "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" pages
+            cd pages
+            git checkout --orphan "${{ inputs.pages_branch }}"
+            git rm -rf . || true
+            mkdir -p "${{ inputs.reports_dir }}"
+            printf '%s\n' "<!doctype html><html><body><h1>Test Reports</h1></body></html>" > index.html
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .
+            git commit -m "Initialize ${{ inputs.pages_branch }}"
+            git push origin "${{ inputs.pages_branch }}"
+            cd ..
+          fi
+
+      - name: Publish report
+        id: publish_report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "pages/${{ inputs.reports_dir }}"
+          ts="$(date -u +'%Y-%m-%dT%H-%M-%SZ')"
+          dest="${ts}-run-${GITHUB_RUN_ID}"
+          mkdir -p "pages/${{ inputs.reports_dir }}/${dest}"
+          cp -R "${{ inputs.report_path }}/." "pages/${{ inputs.reports_dir }}/${dest}/"
+
+          rm -rf pages/latest
+          ln -s "${{ inputs.reports_dir }}/${dest}" pages/latest || true
+          echo "dest=${dest}" >> $GITHUB_OUTPUT
+          echo "relative_path=${{ inputs.reports_dir }}/${dest}" >> $GITHUB_OUTPUT
+
+      - name: Set workflow output
+        id: set_output
+        shell: bash
+        run: |
+          echo "report_url=https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${{ steps.publish_report.outputs.relative_path }}/" >> $GITHUB_OUTPUT
+
+      - name: Prune old reports
+        shell: bash
+        run: |
+          set -euo pipefail
+          now="$(date -u +%s)"
+          max_age="$(( ${{ inputs.retention_days }} * 24 * 60 * 60 ))"
+          shopt -s nullglob
+          for dir in pages/${{ inputs.reports_dir }}/*; do
+            [ -d "$dir" ] || continue
+            base="$(basename "$dir")"
+            ts="${base%-run-*}"
+            if epoch="$(date -u -d "${ts//T/ }" +%s 2>/dev/null)"; then
+              age="$(( now - epoch ))"
+              if [ "$age" -gt "$max_age" ]; then
+                rm -rf "$dir"
+              fi
+            fi
+          done
+
+      - name: Rebuild index
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "<!doctype html><html><head><meta charset='utf-8'><title>Test Reports</title></head><body>"
+            echo "<h1>Test Reports</h1>"
+            echo "<p>Retention: ${{ inputs.retention_days }} day(s)</p>"
+            echo "<ul>"
+            for d in $(ls -1 "pages/${{ inputs.reports_dir }}" 2>/dev/null | sort -r); do
+              echo "<li><a href=\"${{ inputs.reports_dir }}/${d}/\">${d}</a></li>"
+            done
+            echo "</ul><p><a href=\"latest/\">Latest report</a></p></body></html>"
+          } > pages/index.html
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Publish report for run ${GITHUB_RUN_ID}"
+          git push origin "${{ inputs.pages_branch }}"
