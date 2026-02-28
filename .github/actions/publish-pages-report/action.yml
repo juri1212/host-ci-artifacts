@@ -5,7 +5,7 @@ inputs:
     description: "Path (in caller workspace) to generated HTML report directory"
     required: true
   retention_days:
-    description: "Delete reports older than this many days"
+    description: "Delete reports older than this many days (-1 keeps all reports)"
     required: false
     default: 30
   reports_dir:
@@ -43,10 +43,15 @@ runs:
           echo "Report directory not found: ${{ inputs.report_path }}"
           exit 1
         fi
-        if ! [[ "${{ inputs.retention_days }}" =~ ^[0-9]+$ ]]; then
-          echo "retention_days must be a non-negative integer: ${{ inputs.retention_days }}"
-          exit 1
-        fi
+          # Allow -1 to indicate "keep all reports"; otherwise must be a non-negative integer
+          if ! [[ "${{ inputs.retention_days }}" =~ ^-?[0-9]+$ ]]; then
+            echo "retention_days must be an integer (use -1 to keep all): ${{ inputs.retention_days }}"
+            exit 1
+          fi
+          if [[ "${{ inputs.retention_days }}" =~ ^- ]] && [ "${{ inputs.retention_days }}" != "-1" ]; then
+            echo "Only -1 is supported as a negative value to keep all reports: ${{ inputs.retention_days }}"
+            exit 1
+          fi
 
     - name: Checkout pages branch
       uses: actions/checkout@v4
@@ -96,20 +101,24 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        now="$(date -u +%s)"
-        max_age="$(( ${{ inputs.retention_days }} * 24 * 60 * 60 ))"
-        shopt -s nullglob
-        for dir in pages/${{ inputs.reports_dir }}/*; do
-          [ -d "$dir" ] || continue
-          base="$(basename "$dir")"
-          ts="${base%-run-*}"
-          if epoch="$(date -u -d "${ts//T/ }" +%s 2>/dev/null)"; then
-            age="$(( now - epoch ))"
-            if [ "$age" -gt "$max_age" ]; then
-              rm -rf "$dir"
-            fi
+          if [ "${{ inputs.retention_days }}" = "-1" ]; then
+            echo "Retention set to -1; keeping all reports (no pruning)"
+          else
+            now="$(date -u +%s)"
+            max_age="$(( ${{ inputs.retention_days }} * 24 * 60 * 60 ))"
+            shopt -s nullglob
+            for dir in pages/${{ inputs.reports_dir }}/*; do
+              [ -d "$dir" ] || continue
+              base="$(basename "$dir")"
+              ts="${base%-run-*}"
+              if epoch="$(date -u -d "${ts//T/ }" +%s 2>/dev/null)"; then
+                age="$(( now - epoch ))"
+                if [ "$age" -gt "$max_age" ]; then
+                  rm -rf "$dir"
+                fi
+              fi
+            done
           fi
-        done
 
     - name: Rebuild index
       shell: bash
@@ -125,7 +134,11 @@ runs:
         {
           echo "<!doctype html><html><head><meta charset='utf-8'><title>Test Reports</title></head><body>"
           echo "<h1>Test Reports</h1>"
-          echo "<p>Retention: ${{ inputs.retention_days }} day(s)</p>"
+          if [ "${{ inputs.retention_days }}" = "-1" ]; then
+            echo "<p>Retention: keep all reports</p>"
+          else
+            echo "<p>Retention: ${{ inputs.retention_days }} day(s)</p>"
+          fi
           echo "<ul>"
           if [ "${#report_dirs[@]}" -gt 0 ]; then
             while IFS= read -r d; do

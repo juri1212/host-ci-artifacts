@@ -25,7 +25,7 @@ Inputs
 ------
 
 - `report_path` (required): Path in the caller workspace to the generated HTML report directory.
-- `retention_days` (default: `30`): Delete reports older than this many days.
+- `retention_days` (default: `30`): Delete reports older than this many days (-1 keeps all reports).
 - `reports_dir` (default: `reports`): Directory inside the pages branch where reports are stored.
 - `pages_branch` (default: `gh-pages`): Target branch in the repository to publish pages to.
 - `artifact_name` (optional): If set, the action downloads this artifact into `report_path` instead of using local files.
