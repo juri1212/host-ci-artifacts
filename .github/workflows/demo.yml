@@ -34,7 +34,7 @@ jobs:
         run: |
           report_url="${{ steps.publish.outputs.report_url }}"
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-            printf '\n### Published Report\n\n- [%s](%s)\n\n' "$report_url" "$report_url" >> "$GITHUB_STEP_SUMMARY"
+            printf '\n### Published Report\n\n- [HTML Test Report](%s)\n\n' "$report_url" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Report URL: $report_url"
           fi
