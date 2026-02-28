@@ -2,6 +2,7 @@ Publish pages report
 =====================
 
 Publish an HTML report directory into a `gh-pages` branch and prune old reports by age.
+Ideally for CI test reports.
 
 Usage
 -----

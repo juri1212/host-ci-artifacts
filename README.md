@@ -1,1 +1,1 @@
-# host-ci-artifacts
+.github/actions/publish-pages-report/README.md
