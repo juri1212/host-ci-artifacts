@@ -43,6 +43,10 @@ runs:
           echo "Report directory not found: ${{ inputs.report_path }}"
           exit 1
         fi
+        if ! [[ "${{ inputs.retention_days }}" =~ ^[0-9]+$ ]]; then
+          echo "retention_days must be a non-negative integer: ${{ inputs.retention_days }}"
+          exit 1
+        fi
 
     - name: Checkout pages branch
       uses: actions/checkout@v4
@@ -56,11 +60,12 @@ runs:
       run: |
         set -euo pipefail
         if [ ! -d pages/.git ]; then
-          git clone --no-checkout "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" pages
+          git clone --no-checkout "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" pages
           cd pages
           git checkout --orphan "${{ inputs.pages_branch }}"
           git rm -rf . || true
           mkdir -p "${{ inputs.reports_dir }}"
+          touch .nojekyll
           printf '%s\n' "<!doctype html><html><body><h1>Test Reports</h1></body></html>" > index.html
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -76,6 +81,7 @@ runs:
       run: |
         set -euo pipefail
         mkdir -p "pages/${{ inputs.reports_dir }}"
+        touch pages/.nojekyll
         ts="$(date -u +'%Y-%m-%dT%H-%M-%SZ')"
         dest="${ts}-run-${GITHUB_RUN_ID}"
         mkdir -p "pages/${{ inputs.reports_dir }}/${dest}"
@@ -109,14 +115,23 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        shopt -s nullglob
+        report_dirs=()
+        for path in "pages/${{ inputs.reports_dir }}"/*; do
+          [ -d "$path" ] || continue
+          report_dirs+=("$(basename "$path")")
+        done
+
         {
           echo "<!doctype html><html><head><meta charset='utf-8'><title>Test Reports</title></head><body>"
           echo "<h1>Test Reports</h1>"
           echo "<p>Retention: ${{ inputs.retention_days }} day(s)</p>"
           echo "<ul>"
-          for d in $(ls -1 "pages/${{ inputs.reports_dir }}" 2>/dev/null | sort -r); do
-            echo "<li><a href=\"${{ inputs.reports_dir }}/${d}/\">${d}</a></li>"
-          done
+          if [ "${#report_dirs[@]}" -gt 0 ]; then
+            while IFS= read -r d; do
+              echo "<li><a href=\"${{ inputs.reports_dir }}/${d}/\">${d}</a></li>"
+            done < <(printf '%s\n' "${report_dirs[@]}" | sort -r)
+          fi
           echo "</ul><p><a href=\"latest/\">Latest report</a></p></body></html>"
         } > pages/index.html
 
