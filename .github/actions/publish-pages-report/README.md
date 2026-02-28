@@ -1,8 +1,9 @@
 Publish pages report
 =====================
 
-Publish an HTML report directory into a `gh-pages` branch and prune old reports by age.
-Ideally for CI test reports.
+Publish an HTML report directory into a `gh-pages` branch and prune old reports by age. The action preserves each run's report so multiple previous reports are hosted and accessible (organized under the `reports_dir`), while older reports are removed according to `retention_days`.
+
+Ideally for CI HTML test reports.
 
 Usage
 -----
