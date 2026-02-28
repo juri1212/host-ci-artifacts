@@ -149,7 +149,20 @@ jobs:
           cd pages
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Ensure we are on the pages branch (create orphan if needed)
+          branch="${{ inputs.pages_branch }}"
+          if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+            git checkout "$branch"
+          else
+            git checkout --orphan "$branch" || git checkout -b "$branch"
+            git rm -rf . || true
+          fi
+
           git add -A
-          git diff --cached --quiet && exit 0
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
           git commit -m "Publish report for run ${GITHUB_RUN_ID}"
-          git push origin "${{ inputs.pages_branch }}"
+          git push --set-upstream origin "$branch"
