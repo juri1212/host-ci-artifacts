@@ -17,6 +17,8 @@ jobs:
   publish-report:
     needs: test
     uses: ./.github/workflows/publish-pages-report-reusable.yml
+    permissions:
+      contents: write
     with:
       report_path: test-report
       retention_days: 14
