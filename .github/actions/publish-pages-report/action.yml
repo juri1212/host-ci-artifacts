@@ -43,21 +43,50 @@ runs:
           echo "Report directory not found: ${{ inputs.report_path }}"
           exit 1
         fi
-          # Allow -1 to indicate "keep all reports"; otherwise must be a non-negative integer
-          if ! [[ "${{ inputs.retention_days }}" =~ ^-?[0-9]+$ ]]; then
-            echo "retention_days must be an integer (use -1 to keep all): ${{ inputs.retention_days }}"
-            exit 1
-          fi
-          if [[ "${{ inputs.retention_days }}" =~ ^- ]] && [ "${{ inputs.retention_days }}" != "-1" ]; then
-            echo "Only -1 is supported as a negative value to keep all reports: ${{ inputs.retention_days }}"
-            exit 1
-          fi
+        # Allow -1 to indicate "keep all reports"; otherwise must be a non-negative integer
+        if ! [[ "${{ inputs.retention_days }}" =~ ^-?[0-9]+$ ]]; then
+          echo "retention_days must be an integer (use -1 to keep all): ${{ inputs.retention_days }}"
+          exit 1
+        fi
+        if [[ "${{ inputs.retention_days }}" =~ ^- ]] && [ "${{ inputs.retention_days }}" != "-1" ]; then
+          echo "Only -1 is supported as a negative value to keep all reports: ${{ inputs.retention_days }}"
+          exit 1
+        fi
+
+        reports_dir="${{ inputs.reports_dir }}"
+        if [ -z "$reports_dir" ]; then
+          echo "reports_dir cannot be empty"
+          exit 1
+        fi
+        if ! [[ "$reports_dir" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+          echo "reports_dir contains invalid characters: $reports_dir"
+          exit 1
+        fi
+        if [[ "$reports_dir" == /* || "$reports_dir" == *".."* || "$reports_dir" == *"//"* ]]; then
+          echo "reports_dir must be a safe relative path without traversal: $reports_dir"
+          exit 1
+        fi
+
+        pages_branch="${{ inputs.pages_branch }}"
+        if [ -z "$pages_branch" ]; then
+          echo "pages_branch cannot be empty"
+          exit 1
+        fi
+        if ! [[ "$pages_branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+          echo "pages_branch contains invalid characters: $pages_branch"
+          exit 1
+        fi
+        if [[ "$pages_branch" == /* || "$pages_branch" == *".."* || "$pages_branch" == *"//"* ]]; then
+          echo "pages_branch must be a safe git ref name: $pages_branch"
+          exit 1
+        fi
 
     - name: Checkout pages branch
       uses: actions/checkout@v4
       with:
         ref: ${{ inputs.pages_branch }}
         path: pages
+        fetch-depth: 0
       continue-on-error: true
 
     - name: Initialize pages branch if needed
@@ -65,19 +94,21 @@ runs:
       run: |
         set -euo pipefail
         if [ ! -d pages/.git ]; then
-          git clone --no-checkout "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" pages
-          cd pages
-          git checkout --orphan "${{ inputs.pages_branch }}"
+          echo "Failed to prepare pages repository checkout"
+          exit 1
+        fi
+
+        cd pages
+        branch="${{ inputs.pages_branch }}"
+        if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+          git fetch --depth=1 origin "$branch"
+          git checkout -B "$branch" "origin/$branch"
+        else
+          git checkout --orphan "$branch"
           git rm -rf . || true
           mkdir -p "${{ inputs.reports_dir }}"
           touch .nojekyll
           printf '%s\n' "<!doctype html><html><body><h1>Test Reports</h1></body></html>" > index.html
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .
-          git commit -m "Initialize ${{ inputs.pages_branch }}"
-          git push origin "${{ inputs.pages_branch }}"
-          cd ..
         fi
 
     - name: Publish report
@@ -101,35 +132,48 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-          if [ "${{ inputs.retention_days }}" = "-1" ]; then
-            echo "Retention set to -1; keeping all reports (no pruning)"
-          else
-            now="$(date -u +%s)"
-            max_age="$(( ${{ inputs.retention_days }} * 24 * 60 * 60 ))"
-            shopt -s nullglob
-            for dir in pages/${{ inputs.reports_dir }}/*; do
-              [ -d "$dir" ] || continue
-              base="$(basename "$dir")"
-              ts="${base%-run-*}"
-              if epoch="$(date -u -d "${ts//T/ }" +%s 2>/dev/null)"; then
-                age="$(( now - epoch ))"
-                if [ "$age" -gt "$max_age" ]; then
-                  rm -rf "$dir"
-                fi
+        if [ "${{ inputs.retention_days }}" = "-1" ]; then
+          echo "Retention set to -1; keeping all reports (no pruning)"
+        else
+          now="$(date -u +%s)"
+          max_age="$(( ${{ inputs.retention_days }} * 24 * 60 * 60 ))"
+          shopt -s nullglob
+          for dir in pages/${{ inputs.reports_dir }}/*; do
+            [ -d "$dir" ] || continue
+            base="$(basename "$dir")"
+            ts="${base%-run-*}"
+            if epoch="$(date -u -d "${ts//T/ }" +%s 2>/dev/null)"; then
+              age="$(( now - epoch ))"
+              if [ "$age" -gt "$max_age" ]; then
+                rm -rf "$dir"
               fi
-            done
-          fi
+            fi
+          done
+        fi
 
     - name: Rebuild index
       shell: bash
       run: |
         set -euo pipefail
+
+        html_escape() {
+          local value="$1"
+          value="${value//&/&amp;}"
+          value="${value//</&lt;}"
+          value="${value//>/&gt;}"
+          value="${value//\"/&quot;}"
+          value="${value//\'/&#39;}"
+          printf '%s' "$value"
+        }
+
         shopt -s nullglob
         report_dirs=()
         for path in "pages/${{ inputs.reports_dir }}"/*; do
           [ -d "$path" ] || continue
           report_dirs+=("$(basename "$path")")
         done
+
+        reports_dir_safe="$(html_escape "${{ inputs.reports_dir }}")"
 
         {
           echo "<!doctype html><html><head><meta charset='utf-8'><title>Test Reports</title></head><body>"
@@ -142,7 +186,8 @@ runs:
           echo "<ul>"
           if [ "${#report_dirs[@]}" -gt 0 ]; then
             while IFS= read -r d; do
-              echo "<li><a href=\"${{ inputs.reports_dir }}/${d}/\">${d}</a></li>"
+              d_safe="$(html_escape "$d")"
+              echo "<li><a href=\"${reports_dir_safe}/${d_safe}/\">${d_safe}</a></li>"
             done < <(printf '%s\n' "${report_dirs[@]}" | sort -r)
           fi
           echo "</ul><p><a href=\"latest/\">Latest report</a></p></body></html>"
