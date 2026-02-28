@@ -23,6 +23,7 @@ inputs:
 outputs:
   report_url:
     description: "URL to the published report (pages site)"
+    value: ${{ steps.set_output.outputs.report_url }}
 
 runs:
   using: "composite"
@@ -86,6 +87,7 @@ runs:
         echo "relative_path=${{ inputs.reports_dir }}/${dest}" >> $GITHUB_OUTPUT
 
     - name: Set action output
+      id: set_output
       shell: bash
       run: |
         echo "report_url=https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${{ steps.publish_report.outputs.relative_path }}/" >> $GITHUB_OUTPUT
